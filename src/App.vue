@@ -5,10 +5,10 @@ const LANGUAGES = [
   {
     code: "it",
     label: "Italiano",
-    csvPath: "./data/italian_core_8000_wordforms.csv",
-    wordformsV1Path: "./data/italian_lexicon_wordforms_v1.csv",
-    lemmasV1Path: "./data/italian_lexicon_lemmas_v1.csv",
-    domainsPath: "./data/domains_v1.csv",
+    csvPath: "data/italian_core_8000_wordforms.csv",
+    wordformsV1Path: "data/italian_lexicon_wordforms_v1.csv",
+    lemmasV1Path: "data/italian_lexicon_lemmas_v1.csv",
+    domainsPath: "data/domains_v1.csv",
   },
 ];
 
@@ -235,7 +235,9 @@ const positionLabel = computed(() => {
 });
 const remainingCount = computed(() => Math.max(0, total.value - (index.value + 1)));
 
+const deckSize = computed(() => words.value.length);
 const knownCount = computed(() => knownSet.value.size);
+const unknownLeftCount = computed(() => Math.max(0, deckSize.value - knownCount.value));
 
 const confirmedWordsList = computed(() =>
   Array.from(knownSet.value).sort((a, b) => a.localeCompare(b))
@@ -249,6 +251,18 @@ function toggleSidebar() {
 
 function closeSidebar() {
   sidebarOpen.value = false;
+}
+
+function clearProgress() {
+  const langCode = selectedLanguageCode.value;
+  knownSet.value = new Set();
+  masteryByLemma.value = {};
+  saveKnownSet(langCode, knownSet.value);
+  saveMastery(langCode, masteryByLemma.value);
+  if (filteredWords.value.length) {
+    index.value = 0;
+    setBackgroundForIndex(0);
+  }
 }
 
 const languageLabel = computed(() => {
@@ -579,9 +593,7 @@ onMounted(() => {
         <div class="app-title">
           <div class="app-title-main">Language Index</div>
           <div class="app-title-sub">
-            <template v-if="viewMode === 'cards'">Gently mark what you truly know.</template>
-            <template v-else-if="viewMode === 'reading'">Paste text — words are highlighted by your mastery.</template>
-            <template v-else>Generate practice text from your weak spots.</template>
+            Gently mark what you truly know.
           </div>
         </div>
         <button
@@ -600,9 +612,24 @@ onMounted(() => {
         <div v-if="menuOpen" class="menu-overlay" @click.self="menuOpen = false">
           <div class="menu-panel">
             <nav class="view-tabs" aria-label="View mode">
-              <button type="button" class="tab" :class="{ active: viewMode === 'cards' }" @click="viewMode = 'cards'; menuOpen = false">Cards</button>
-              <button type="button" class="tab" :class="{ active: viewMode === 'reading' }" @click="viewMode = 'reading'; menuOpen = false">Reading</button>
+              <button type="button" class="tab active">Cards</button>
             </nav>
+            <div class="menu-section">
+              <span class="generate-label">Language</span>
+              <div class="lang-chips">
+                <button
+                  v-for="lang in languages"
+                  :key="lang.code"
+                  type="button"
+                  class="ghost-btn"
+                  :class="{ 'lang-active': lang.code === selectedLanguageCode }"
+                  @click.stop="selectedLanguageCode = lang.code; menuOpen = false"
+                >
+                  <span class="dot"></span>
+                  {{ lang.label }}
+                </button>
+              </div>
+            </div>
             <div class="menu-section">
               <button
                 type="button"
@@ -613,6 +640,14 @@ onMounted(() => {
                 <span class="chip-dot"></span>
                 <span v-if="knownCount === 0">No words confirmed yet</span>
                 <span v-else>{{ knownCount }} confirmed</span>
+              </button>
+              <button
+                type="button"
+                class="ghost-btn"
+                @click.stop="clearProgress(); menuOpen = false"
+              >
+                <span class="dot"></span>
+                Clear progress
               </button>
             </div>
           </div>
@@ -646,10 +681,6 @@ onMounted(() => {
             <div class="card-word">
               {{ currentWord.word }}
             </div>
-            <div class="card-counter">
-              <span class="card-counter-nav">{{ index + 1 }}</span>
-              <span class="card-counter-remaining">{{ remainingCount }} left</span>
-            </div>
           </div>
           <div class="card-meta">
             <div v-if="currentWord.english" class="english-pill">
@@ -667,35 +698,16 @@ onMounted(() => {
               👍
             </button>
           </div>
-        </div>
-      </div>
-
-      <div class="center reading-view" v-else-if="viewMode === 'reading'">
-        <p v-if="!lexiconLoaded" class="status">{{ lexiconLoadError || 'Loading lexicon…' }}</p>
-        <template v-else>
-          <textarea v-model="readingText" class="reading-input" placeholder="Paste or type Italian text here…" rows="4"></textarea>
-          <div class="reading-output" v-if="highlightedTokens.length">
-            <span
-              v-for="(t, i) in highlightedTokens"
-              :key="i"
-              :class="[
-                t.type === 'word' ? 'token' : 'token-punct',
-                t.type === 'word' && t.level !== null ? (t.level >= 3 ? 'token-known' : t.level >= 1 ? 'token-recognized' : 'token-unknown') : '',
-                t.type === 'word' && t.level === null ? 'token-lexicon' : '',
-                t.type === 'word' && t.english_gloss ? 'token-has-tooltip' : t.type === 'word' ? 'token-no-tooltip' : '',
-                t.type === 'word' && t.lemma_id ? 'token-tappable' : ''
-              ]"
-              :title="t.type === 'word' && t.english_gloss ? t.english_gloss : (t.type === 'word' && t.lemma_id ? 'Tap to cycle: confirmed ↔ indexed ↔ unknown' : 'Not in lexicon')"
-              @click.stop="t.type === 'word' && t.lemma_id && cycleWordState(t)"
-            >{{ t.value }}</span>
+          <div class="card-counter">
+            <span class="card-counter-nav">{{ knownCount }}</span>
+            <span class="card-counter-remaining">{{ unknownLeftCount }} left</span>
           </div>
-        </template>
+        </div>
       </div>
 
       <div class="bottom-row">
         <div class="tap-hint">
-          <template v-if="viewMode === 'cards'">Tap or swipe. Hold to fast-navigate.</template>
-          <template v-else>Green = known, red = to learn, gray = not in lexicon.</template>
+          Tap or swipe. Hold to fast-navigate.
         </div>
       </div>
     </div>
